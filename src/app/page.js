@@ -1,24 +1,17 @@
-'use client'
-import { usePathname } from 'next/navigation';
-import React from 'react';
+// Em uma página, como app/page.js
 
-const Layout = ({ children }) => {
-  const pathname = usePathname();
+"use client";
 
-  // Redirecionar para a página de login se a URL for "/"
-  if (pathname === '/') {
-    return (
-      <div className="flex justify-center items-center h-screen bg-gray-100">
-        <h1>Redirecionando para a página de Login...</h1>
-      </div>
-    );
-  }
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
-  return (
-    <div className="flex flex-col min-h-screen bg-gray-100">
-      <main>{children}</main>
-    </div>
-  );
-};
+export default function Home() {
+  const router = useRouter();
 
-export default Layout;
+  useEffect(() => {
+    // Redireciona para a página de login
+    router.push('/login');
+  }, [router]);
+
+  return null; // Nada será renderizado enquanto o redirecionamento ocorre
+}
