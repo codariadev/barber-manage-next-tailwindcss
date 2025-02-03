@@ -1,34 +1,66 @@
-"use client"
+"use client";
 import React, { useEffect, useState } from 'react';
 import { fetchAppointments, fetchClients } from '../../functions/firestoreFunction';
 import { format } from 'date-fns';
 import { useRouter } from 'next/navigation';
 import Layout from '../resources/layout';
+import { getAuth } from 'firebase/auth';
 
 const Home = () => {
-  const router = useRouter();
-
   const [events, setEvents] = useState([]);
   const [clients, setClients] = useState([]);
   const [userName] = useState("Lucas Eduardo");
+  const { user, loading } = useAuth();
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState(false);
+
+  useEffect(() => {
+    if (!loading) {
+      if (!user) {
+        router.push("/login");
+      } else if (user.nivel < 2) {
+        alert("Acesso Negado");
+        router.push('/login');
+      } else {
+        setAuthorized(true);
+      }
+    }
+  }, [user, loading, router]);
+
+  if (loading) {
+    return <div>Carregando...</div>;
+  }
+
+  if (!authorized) {
+    return <div>Verificando permissão...</div>;
+  }
 
   const handleNavigation = (path) => {
     router.push(path);
   };
 
   useEffect(() => {
-    const loadAppointments = async () => {
-      try {
-        const appointments = await fetchAppointments();
-        setEvents(appointments);
+    const auth = getAuth();
+    const user = auth.currentUser;
 
-        const clientsData = await fetchClients();
-        setClients(clientsData);
-      } catch (error) {
-        console.log('Erro ao carregar agendamentos', error);
-      }
-    };
-    loadAppointments();
+    if (!user) {
+      console.log("Usuário não autenticado");
+      // Redirecionar para a tela de login, por exemplo
+      router.push('/login');
+    } else {
+      const loadAppointments = async () => {
+        try {
+          const appointments = await fetchAppointments();
+          setEvents(appointments || []);  // Garantir que seja um array vazio se não houver dados
+
+          const clientsData = await fetchClients();
+          setClients(clientsData || []);  // Garantir que seja um array vazio se não houver dados
+        } catch (error) {
+          console.log('Erro ao carregar agendamentos', error);
+        }
+      };
+      loadAppointments();
+    }
   }, []);
 
   return (

@@ -5,6 +5,8 @@
       "@/*": ["src/*"],
       "@resources/*": ["src/app/resources/*"],
       "@functions/*": ["src/functions/*"],
+      "@modal/*": ["src/app/modal/*"],
+      "@authContext/*": ["src/app/api/*"],
     }
   }
 }

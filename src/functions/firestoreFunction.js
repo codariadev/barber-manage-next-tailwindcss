@@ -1,171 +1,324 @@
 import { db } from './firebaseConfig';
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc } from 'firebase/firestore';
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, getDoc, getFirestore } from 'firebase/firestore';
+import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from 'firebase/auth';
+import { useEffect } from 'react';
 
-const clientsCollection = collection(db, 'clients');
-
-export const fetchClients = async () => {
-    const snapshot = await getDocs(clientsCollection);
-    const clientsList = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-    }));
-    return clientsList;
+// Função para configurar a persistência ao logar
+export const setUserPersistence = async () => {
+  const auth = getAuth();
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+    console.log("Persistência definida corretamente");
+  } catch (error) {
+    console.error("Erro ao definir persistência:", error);
+  }
 };
-export const addClient = async (client) => {
-    try {
-        const docRef = await addDoc(clientsCollection, client);
-        console.log('Cliente adicionado com ID: ', docRef.id);
-    } catch (e) {
-        console.error('Erro ao adicionar cliente: ', e);
+
+// Função para obter o nome da empresa vinculada ao usuário
+const getCompanyName = async () => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("Usuário não autenticado.");
+  }
+
+  try {
+    const db = getFirestore();
+    const userRef = doc(db, 'users', user.uid);
+    const docSnap = await getDoc(userRef);
+
+    if (docSnap.exists()) {
+      return docSnap.data().empresa;
+    } else {
+      console.error("Usuário não encontrado.");
+      return null;
     }
+  } catch (error) {
+    console.error("Erro ao buscar dados da empresa:", error);
+    throw error;
+  }
+};
+
+export const AuthenticationHandler = () => {
+  const auth = getAuth();
+
+  useEffect(() => {
+    const checkAuthStatus = async (user) => {
+      if (!user) {
+        console.error("Usuário não autenticado.");
+      } else {
+        await setUserPersistence();
+      }
+    };
+
+    const unsubscribe = onAuthStateChanged(auth, checkAuthStatus);
+
+    // Cleanup do efeito
+    return () => unsubscribe();
+  }, [auth]);
+
+  return null; // Esse componente não precisa renderizar nada
+};
+
+// Função para verificar se o usuário está logado antes de continuar
+const checkAuthAndRun = async (operation) => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+
+  if (!user) {
+    console.error("Usuário não autenticado.");
+    return;
+  }
+
+  console.log("Usuário autenticado. Executando operação...");
+  await operation();
+};
+
+const getCompanyCollectionPath = async () => {
+  const auth = getAuth();
+  const user = auth.currentUser;
+
+  if (!user) {
+    throw new Error("Usuário não autenticado.");
+  }
+
+  const companyName = await getCompanyName();
+  if (companyName) {
+    return `companies/${companyName}`;
+  }
+  return null;
+};
+
+// Funções para Clientes
+export const fetchClients = async () => {
+  const companyCollectionPath = await getCompanyCollectionPath();
+  if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+
+  const clientsCollection = collection(db, `${companyCollectionPath}/clients`);
+  const snapshot = await getDocs(clientsCollection);
+  const clientsList = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    ...doc.data(),
+  }));
+  return clientsList;
+};
+
+export const addClient = async (client) => {
+  checkAuthAndRun(async () => {
+    try {
+      const companyCollectionPath = await getCompanyCollectionPath();
+      if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+
+      const clientsCollection = collection(db, companyCollectionPath);
+      const docRef = await addDoc(clientsCollection, client);
+      console.log('Cliente adicionado com ID: ', docRef.id);
+    } catch (e) {
+      console.error('Erro ao adicionar cliente: ', e);
+    }
+  });
 };
 
 export const updateClient = async (id, updatedClient) => {
+  checkAuthAndRun(async () => {
     try {
-        const clientDoc = doc(db, 'clients', id);
-        await updateDoc(clientDoc, updatedClient);
-        console.log('Cliente atualizado com ID: ', id);
+      const companyCollectionPath = await getCompanyCollectionPath();
+      if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+
+      const clientDoc = doc(db, companyCollectionPath, id);
+      await updateDoc(clientDoc, updatedClient);
+      console.log('Cliente atualizado com ID: ', id);
     } catch (e) {
-        console.error('Erro ao atualizar cliente: ', e);
+      console.error('Erro ao atualizar cliente: ', e);
     }
+  });
 };
 
 export const deleteClient = async (id) => {
+  checkAuthAndRun(async () => {
     try {
-        const clientDoc = doc(db, 'clients', id);
-        await deleteDoc(clientDoc);
-        console.log('Cliente excluído com ID: ', id);
+      const companyCollectionPath = await getCompanyCollectionPath();
+      if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+
+      const clientDoc = doc(db, companyCollectionPath, id);
+      await deleteDoc(clientDoc);
+      console.log('Cliente excluído com ID: ', id);
     } catch (e) {
-        console.error('Erro ao excluir cliente: ', e);
+      console.error('Erro ao excluir cliente: ', e);
     }
+  });
 };
 
-// Bloco de agendamentos
-const appointmentsCollections = collection(db, 'appointments');
+// Funções de Agendamentos
+const getAppointmentsCollectionPath = async () => {
+  const companyCollectionPath = await getCompanyCollectionPath();
+  if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
 
-export const saveAppointment = async (appointment, id=null) => {
+  // Garantindo que a estrutura seja "companies/{companyName}/appointments"
+  const collectionPath = `${companyCollectionPath}/appointments`; // Correto: coleções seguidas de documentos
+  return collectionPath;
+};
+
+export const saveAppointment = async (appointment, id = null) => {
+  checkAuthAndRun(async () => {
     try {
-        if (id) {
-            const docRef = doc(appointmentsCollections, id);
-            await updateDoc(docRef, appointment);
-        } else {
-            const docRef = await addDoc(appointmentsCollections, appointment);
-            return docRef.id;
-        }
-
-    }catch (error) {
-        console.error('Erro ao salvar o agendamento', error);
-        throw error;
+      const appointmentsCollection = collection(db, await getAppointmentsCollectionPath());
+      if (id) {
+        const docRef = doc(appointmentsCollection, id);
+        await updateDoc(docRef, appointment);
+      } else {
+        const docRef = await addDoc(appointmentsCollection, appointment);
+        return docRef.id;
+      }
+    } catch (error) {
+      console.error('Erro ao salvar o agendamento', error);
+      throw error;
     }
+  });
 };
 
 export const deleteAppointment = async (id) => {
+  checkAuthAndRun(async () => {
     try {
-        const appointmentRef = doc(db, 'appointments', id);
-        await deleteDoc(appointmentRef);
-        console.log('Agendamento deletado com sucesso');
+      const appointmentRef = doc(db, await getAppointmentsCollectionPath(), id);
+      await deleteDoc(appointmentRef);
+      console.log('Agendamento deletado com sucesso');
     } catch (error) {
-        alert('Erro ao deletar o agendamento:', error);
+      alert('Erro ao deletar o agendamento:', error);
     }
+  });
 };
 
-
 export const fetchAppointments = async () => {
-    const snapshot = await getDocs(appointmentsCollections);
-    const appointment = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
+  checkAuthAndRun(async () => {
+    const snapshot = await getDocs(collection(db, await getAppointmentsCollectionPath()));
+    const appointments = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
     }));
-    return appointment;
-}
+    return appointments;
+  });
+};
 
-// Bloco de Produtos e serviços
+// Funções de Produtos e Serviços
+const getProductsCollectionPath = async () => {
+  const companyCollectionPath = await getCompanyCollectionPath();
+  if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+  return `${companyCollectionPath}/products`;
+};
+
 export const fetchProducts = async () => {
-    const snapshot = await getDocs(collection(db, 'products'));
-    return snapshot.docs.map((doc) => ({id: doc.id, ...doc.data()}));
+  checkAuthAndRun(async () => {
+    const snapshot = await getDocs(collection(db, await getProductsCollectionPath()));
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  });
 };
 
 export const addProduct = async (product) => {
-    await addDoc(collection(db, 'products'), product);
+  checkAuthAndRun(async () => {
+    await addDoc(collection(db, await getProductsCollectionPath()), product);
+  });
 };
 
-export const updateProduct = async (id, updateProduct) => {
-    await updateDoc(doc(db, 'products', id), updateProduct);
+export const updateProduct = async (id, updatedProduct) => {
+  checkAuthAndRun(async () => {
+    await updateDoc(doc(db, await getProductsCollectionPath(), id), updatedProduct);
+  });
 };
 
 export const deleteProduct = async (id) => {
+  checkAuthAndRun(async () => {
     try {
-        const productRef = doc(db, "products", id); 
-        await deleteDoc(productRef);
-        console.log(`Produto com ID ${id} foi excluído com sucesso.`);
+      const productRef = doc(db, await getProductsCollectionPath(), id);
+      await deleteDoc(productRef);
+      console.log(`Produto com ID ${id} foi excluído com sucesso.`);
     } catch (error) {
-        console.error("Erro ao excluir produto:", error);
-        throw error;
+      console.error('Erro ao excluir produto:', error);
+      throw error;
     }
+  });
 };
 
-// Bloco de funcionários
+// Funções de Funcionários
+const getEmployeesCollectionPath = async () => {
+  const companyCollectionPath = await getCompanyCollectionPath();
+  if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+  return `${companyCollectionPath}/employees`;
+};
+
 export const fetchEmployees = async () => {
+  checkAuthAndRun(async () => {
     try {
-        const querySnapshot = await getDocs(collection(db, 'funcionarios'));
-        return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      const querySnapshot = await getDocs(collection(db, await getEmployeesCollectionPath()));
+      return querySnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
     } catch (error) {
-        console.error('Erro ao buscar funcionários:', error);
-        throw error;
+      console.error('Erro ao buscar funcionários:', error);
+      throw error;
     }
+  });
 };
 
 export const addEmployee = async (employeeData) => {
+  checkAuthAndRun(async () => {
     try {
-        const docRef = await addDoc(collection(db, 'employees'), employeeData);
-        return docRef.id;
+      const docRef = await addDoc(collection(db, await getEmployeesCollectionPath()), employeeData);
+      return docRef.id;
     } catch (error) {
-        console.error('Erro ao adicionar funcionário:', error);
-        throw error;
+      console.error('Erro ao adicionar funcionário:', error);
+      throw error;
     }
+  });
 };
 
 export const updateEmployee = async (id, employeeData) => {
+  checkAuthAndRun(async () => {
     try {
-        const employeeRef = doc(db, 'employees', id);
-        await updateDoc(employeeRef, employeeData);
+      const employeeRef = doc(db, await getEmployeesCollectionPath(), id);
+      await updateDoc(employeeRef, employeeData);
     } catch (error) {
-        console.error('Erro ao atualizar funcionário:', error);
-        throw error;
+      console.error('Erro ao atualizar funcionário:', error);
+      throw error;
     }
+  });
 };
 
 export const deleteEmployee = async (id) => {
+  checkAuthAndRun(async () => {
     try {
-        const employeeRef = doc(db, 'employees', id);
-        await deleteDoc(employeeRef);
+      const employeeRef = doc(db, await getEmployeesCollectionPath(), id);
+      await deleteDoc(employeeRef);
     } catch (error) {
-        console.error('Erro ao deletar funcionário:', error);
-        throw error;
+      console.error('Erro ao deletar funcionário:', error);
+      throw error;
     }
+  });
 };
 
-// Bloco de vendas
-const salesCollection = collection(db, 'sales');
+// Funções de Vendas
+const getSalesCollectionPath = async () => {
+  const companyCollectionPath = await getCompanyCollectionPath();
+  if (!companyCollectionPath) throw new Error('Usuário não autenticado.');
+  return `${companyCollectionPath}/sales`;
+};
 
 export const saveSales = async (sale) => {
+  checkAuthAndRun(async () => {
     try {
-        const docRef = await addDoc(salesCollection, sale);
-        console.log('Venda salva com ID:', docRef.id);
-        return docRef.id;
+      const docRef = await addDoc(collection(db, await getSalesCollectionPath()), sale);
+      console.log('Venda salva com ID:', docRef.id);
+      return docRef.id;
     } catch (error) {
-        console.log('Erro ao salvar venda:', error);
-        throw error;
+      console.log('Erro ao salvar venda:', error);
+      throw error;
     }
+  });
 };
 
 export const fetchSales = async () => {
-    const snapshot = await getDocs(salesCollection);
-    const sales = snapshot.docs.map((doc) => ( {id: doc.id, ...doc.data()} ));
-    const totalSales = sales.reduce((total, sale) => {
-        const itemTotal = sale.items.reduce((sum, item) => sum + (item.price || 0), 0);
-        return total + itemTotal
-    }, 0);
-
-    return {sales, totalSales}
+  checkAuthAndRun(async () => {
+    const snapshot = await getDocs(collection(db, await getSalesCollectionPath()));
+    const sales = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+    const totalSales = sales.reduce((total, sale) => total + sale.total, 0);
+    return { sales, totalSales };
+  });
 };
